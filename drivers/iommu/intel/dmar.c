@@ -931,7 +931,9 @@ dmar_validate_one_drhd(struct acpi_dmar_header *entry, void *arg)
  *
  * - DMAR_FORCEON_TBOOT: tboot strictly requires DMA remapping for secure
  *   boot hence supersedes any user opts ("iommu=off" or "intel_iommu=off")
- *   and weaker disables.
+ *   and weaker disables. But if firmware forces DMA remapping off (by
+ *   setting DMAR_REMAP_OPT_OUT in the DMAR table), no force_on is allowed.
+ *   Firmware settings must be changed to unblock tboot.
  *
  * - DMAR_FORCEON_PLATFORM: external-facing devices requires DMA
  *   remapping to prevent malicious downstream external devices from
@@ -986,9 +988,18 @@ void __init detect_intel_iommu(void)
 		dmar_state = DMAR_DISABLED_USER;
 
 	ret = dmar_table_detect();
-	if (!ret)
-		ret = dmar_walk_dmar_table((struct acpi_table_dmar *)dmar_tbl,
-					   &validate_drhd_cb);
+	if (!ret) {
+		struct acpi_table_dmar *dmar;
+
+		dmar = (struct acpi_table_dmar *)dmar_tbl;
+		if (dmar->flags & DMAR_REMAP_OPT_OUT) {
+			dmar_state = DMAR_DISABLED_FW;
+			pr_info("Firmware forces DMA remapping off\n");
+		}
+
+		ret = dmar_walk_dmar_table(dmar, &validate_drhd_cb);
+	}
+
 	if (!ret && !iommu_detected && dmar_required()) {
 		iommu_detected = 1;
 		/* Make sure ACS will be enabled */
